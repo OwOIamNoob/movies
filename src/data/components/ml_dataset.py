@@ -8,6 +8,7 @@ from torchvision.transforms import Compose
 from torchvision import transforms
 
 import numpy as np
+import cv2
 from collections import defaultdict
 import random
 import json
@@ -15,13 +16,13 @@ from PIL import Image
 import math
 from typing import Optional, List, Dict
 
-from vocab import Vocab
+from src.data.components.vocab import Vocab
 
 class MLDataset(Dataset):
     def __init__(self, 
                  data_dir:str,
                  title_vocab: Vocab,
-                 genre_vocab:Vocab, 
+                 genre_vocab: Vocab, 
                  img_dir:str,
                  data_type:str):
         super().__init__()
@@ -68,14 +69,15 @@ class MLTransformedDataset(Dataset):
                  dataset:MLDataset,
                  pad_id: int = 0,
                  transforms: Optional[Compose] = Compose([transforms.ToTensor()]),
-                 rating_transforms: Optional[Compose] = Compose([transforms.ToTensor()]),
-                 target_rating_size: int = 64):
+                 rating_transforms: Optional[Compose] = Compose([torch.FloatTensor()]),
+                 rating_img_size: int = 64):
         super().__init__()
         self.dataset = dataset
         self.transforms = transforms
         self.rating_transforms = rating_transforms
         self.pad_id = pad_id
-    
+        self.rating_img_size = rating_img_size
+
     def __len__(self) -> int:
         return len(self.dataset)
     
@@ -88,14 +90,17 @@ class MLTransformedDataset(Dataset):
         else:
             rating_image_size = int(math.ceil(math.sqrt(sample['ratings'].shape[0])))
         
-        sample['ratings'] = Image.fromarray(np.pad(sample['ratings'], 
+        sample['ratings'] = np.pad(sample['ratings'], 
                                    ((rating_image_size ** 2 - sample['ratings'].shape[0], 0), (0, 0)), 
                                    'constant', 
-                                   constant_values=(self.pad_id, )).reshape((rating_image_size, rating_image_size, 4)).astype(np.uint8))
+                                   constant_values=(self.pad_id, )).reshape((rating_image_size, rating_image_size, 4)).astype(np.uint8)
+        # print(sample['ratings'].to_numpy())
+        sample['ratings'] = cv2.resize(sample['ratings'], (self.rating_img_size, self.rating_img_size)).transpose((2, 0, 1))
         sample['ratings'] = self.rating_transforms(sample['ratings'])
         
         if sample['image'] is not None:
             sample['image'] = self.transforms(sample['image'])
+
         
         return sample
         
@@ -107,40 +112,36 @@ class Collator:
                  max_seq_len:int, 
                  target_vocab:Vocab,
                  pad_id:int,
-                 img_size:int=64):
+                 rating_img_size: int,
+                 img_size:int):
         self.target_vocab = target_vocab
         self.max_seq_len = max_seq_len
-        self.max_label_len = max_label_len
+        self.max_label_len = len(target_vocab)
         self.seq_pad_id = pad_id
-        self.label_pad_id = self.target_vocab.index['<PAD>']
+        self.label_pad_id = self.target_vocab.vocab['<PAD>']
+        self.rating_img_size = rating_img_size
+        self.img_size = img_size
     
     def __call__(self, batch):
         movieids = []
         titles = []
         genre_probs = []
-        genre_index = []
         ratings = []
         images = []
         
         for item in batch:
-            movieids.append(item['movieid'])
+            movieids.append(int(item['movieid']))
             title_length = item['title'].shape[0]
             title = torch.LongTensor(np.pad(item['title'], 
                                             (0, self.max_seq_len - title_length), 
                                             'constant', 
-                                            constant_values=(self.pad_id, )))
+                                            constant_values=(self.seq_pad_id, )))
             titles.append(title)
+        
+            genre_probs.append(torch.FloatTensor(self.target_vocab.to_prob(item['genre'])))
             
-            genre_length = item['genre'].shape[0]
-            genre = torch.LongTensor(np.pad(item['genre'], 
-                                            (0, self.max_lable_len - genre_length), 
-                                            'constant', 
-                                            constant_values=(self.label_pad_id, )))
-            genre_index.append(genre)
-            genre_probs.append(self.target_vocab.to_prob(item['genre']))
-            
-            if not item['image']:
-                images.append(torch.zeros((3, img_size, img_size)))
+            if item['image'] is None:
+                images.append(torch.zeros((3, self.img_size, self.img_size)))
             else:
                 images.append(item['image'])
             
@@ -148,40 +149,37 @@ class Collator:
             
         return {"movieids": torch.LongTensor(movieids),
                 "titles": torch.stack(titles),
-                "genre": torch.stack(genre_index),
                 "label": torch.stack(genre_probs),
                 "ratings": torch.stack(ratings),
                 "images": torch.stack(images)}
     
 
-import pyrootutils
-pyrootutils.setup_root(search_from=__file__, indicator=".project-root", pythonpath=True)
+# import pyrootutils
+# pyrootutils.setup_root(search_from=__file__, indicator=".project-root", pythonpath=True)
 
-title_vocab = Vocab("/work/hpc/potato/movies/data/movies/dataset/words.txt")
-genre_vocab = Vocab("/work/hpc/potato/movies/data/movies/dataset/genres.txt")
+# title_vocab = Vocab("/work/hpc/potato/movies/data/movies/dataset/words.txt")
+# genre_vocab = Vocab("/work/hpc/potato/movies/data/movies/dataset/genres.txt")
 
-dataset = MLDataset(data_dir="data/movies/dataset/",
-                    img_dir="data/movies/dataset/ml1m-images/",
-                    title_vocab=title_vocab,
-                    genre_vocab=genre_vocab,
-                    data_type="test")
+# dataset = MLDataset(data_dir="data/movies/dataset/",
+#                     img_dir="data/movies/dataset/ml1m-images/",
+#                     title_vocab=title_vocab,
+#                     genre_vocab=genre_vocab,
+#                     data_type="test")
 
-data = dataset[200]
-print(data['ratings'])
-transformed_dataset = MLTransformedDataset(dataset=dataset,
-                                           pad_id=0.,
-                                           transforms=Compose([transforms.Resize((256, 256)),
-                                                               transforms.RandomAffine(degrees=(-10, 10),
-                                                                                       translate=(0.1, 0.1),
-                                                                                       interpolation=transforms.InterpolationMode.NEAREST),
-                                                               transforms.ToTensor()
-                                                               ]),
-                                           rating_transforms=Compose([transforms.Resize((64, 64)),
-                                                                      transforms.PILToTensor(),
-                                                                      transforms.ConvertImageDtype(torch.float32),
-                                                                      transforms.Normalize(mean=[0.5, 4.5, 10, 2.5],
-                                                                                           std=[0.5, 4.5, 10, 2.5])]),
-                                           )
+# data = dataset[200]
+# print(data['ratings'])
+# transformed_dataset = MLTransformedDataset(dataset=dataset,
+#                                            pad_id=0.,
+#                                            transforms=Compose([transforms.Resize((256, 256)),
+#                                                                transforms.RandomAffine(degrees=(-10, 10),
+#                                                                                        translate=(0.1, 0.1),
+#                                                                                        interpolation=transforms.InterpolationMode.NEAREST),
+#                                                                transforms.ToTensor()
+#                                                                ]),
+#                                            rating_transforms=Compose([torch.FloatTensor,
+#                                                                       transforms.Normalize(mean=[0.5, 2.5, 10, 2.5],
+#                                                                                            std=[0.5, 2.5, 10, 2.5])]),
+#                                            )
 
-data = transformed_dataset[200]
-print(data['ratings'].permute(1, 2, 0))
+# data = transformed_dataset[200]
+# print(data['ratings'].permute(1, 2, 0))

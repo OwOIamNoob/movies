@@ -11,7 +11,6 @@ class Vocab:
         self.unk = '<UNK>'
         self.vocab['<PAD>'] = 0
         self.vocab['<UNK>'] = 1
-        self.index = dict() 
         self.update = True
         if path is not None:
             self.load_vocab(path)
@@ -21,7 +20,8 @@ class Vocab:
     def load_vocab(self, path):
         f = open(path, "r")
         for line in f:
-            self.vocab[line.strip()] = len(self.vocab)
+            if line.strip() not in self.vocab:
+                self.vocab[line.strip()] = len(self.vocab)
         
     def tokenize(self, text):
         text = re.sub(r'[^\w\s]', '', text)
@@ -45,7 +45,7 @@ class Vocab:
         return ref
     
     def __len__(self) -> int:
-        return len(self.index)
+        return len(self.vocab)
 
     
     
