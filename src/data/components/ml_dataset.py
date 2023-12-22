@@ -95,7 +95,9 @@ class MLTransformedDataset(Dataset):
                                    'constant', 
                                    constant_values=(self.pad_id, )).reshape((rating_image_size, rating_image_size, 4)).astype(np.uint8)
         # print(sample['ratings'].to_numpy())
-        sample['ratings'] = cv2.resize(sample['ratings'], (self.rating_img_size, self.rating_img_size)).transpose((2, 0, 1))
+        sample['ratings'] = cv2.resize(sample['ratings'], 
+                                       (self.rating_img_size, self.rating_img_size),
+                                        interpolation=cv2.INTER_NEAREST).transpose((2, 0, 1))
         sample['ratings'] = self.rating_transforms(sample['ratings'])
         
         if sample['image'] is not None:

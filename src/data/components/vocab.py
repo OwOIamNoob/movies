@@ -2,6 +2,7 @@ from nltk import wordpunct_tokenize
 import os 
 import numpy as np
 import re
+import torch 
 
 class Vocab:
     def __init__(self,
@@ -11,6 +12,7 @@ class Vocab:
         self.unk = '<UNK>'
         self.vocab['<PAD>'] = 0
         self.vocab['<UNK>'] = 1
+        self.index = dict()
         self.update = True
         if path is not None:
             self.load_vocab(path)
@@ -47,5 +49,16 @@ class Vocab:
     def __len__(self) -> int:
         return len(self.vocab)
 
+    def decode(self, inp, threshold):
+        if len(self.index) == 0:
+            self.index = dict(zip(self.vocab.values(), self.vocab.keys()))
+        output = []
+        inp = inp.cpu().numpy()
+        if inp.shape[0] == len(self):
+            inp = np.where(inp > threshold)[0]
+        output = [self.index[pos] for pos in inp]
+        
+        return output
+            
     
     
